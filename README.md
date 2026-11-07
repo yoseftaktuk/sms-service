@@ -98,3 +98,9 @@ If sms-service must call the public origin, drop the `allow`/`deny` lines and re
 Only `https://files.ezcount.co.il/...` receipts are shortened. Any other URL is sent unchanged. A failed Shlink call also sends the original Ezcount URL, and the donation is still delivered.
 
 Check the instance with `GET https://s.example.com/rest/health`. The body is JSON with `"status": "pass"`. Then shorten one receipt and open the short link. It should redirect to the Ezcount document.
+
+## Deploy
+
+`cloudbuild.yaml` builds the image, pushes it to Artifact Registry, and deploys Cloud Run service `sms-service` in `me-west1`. A Cloud Build trigger on branch `main` runs that file on every push.
+
+Set secrets on the Cloud Run service once, using the names in `.env.example`. The build file does not set or replace them.
