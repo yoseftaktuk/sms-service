@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.core.database import async_session_factory
 from app.models import DonationReceipt
 from app.services.messaging.phone import normalize_israeli_phone
+from app.services.messaging.shlink_client import ShortenError, shorten_url
 from app.services.messaging.sms_client import SmsSendError, send_sms
 from app.services.messaging.whatsapp_client import WhatsAppSendError, send_whatsapp
 from app.services.nedarim_client import resolve_receipt_url_from_webhook, show_invoice
@@ -122,7 +123,8 @@ class DonationReceiptService:
         record.receipt_created = _str_field(payload, "ReceiptCreated")
         record.receipt_doc_num = _str_field(payload, "ReceiptDocNum")
         record.receipt_data = receipt_data
-        if receipt_url:
+        if receipt_url and receipt_url != record.receipt_url:
+            record.short_url = None
             record.receipt_url = receipt_url
 
         if not phone:
@@ -155,7 +157,7 @@ class DonationReceiptService:
         message = build_receipt_message(
             donor_name=record.donor_name,
             amount=record.amount,
-            receipt_url=record.receipt_url,
+            receipt_url=await _link_for_message(record),
         )
         record.send_attempts = (record.send_attempts or 0) + 1
         record.status = STATUS_SEND_PENDING
@@ -185,6 +187,24 @@ class DonationReceiptService:
             record.last_error = str(exc)[:500]
             record.status = STATUS_FAILED
             await self.db.commit()
+
+
+async def _link_for_message(record: DonationReceipt) -> str:
+    """Use a stored short URL, shorten the Ezcount link, or keep the original."""
+    if record.short_url:
+        return record.short_url
+    if not record.receipt_url:
+        return ""
+
+    try:
+        short_url = await shorten_url(record.receipt_url)
+    except ShortenError:
+        logger.info("Shlink shorten failed for transaction_id=%s", record.transaction_id)
+        return record.receipt_url
+
+    if short_url != record.receipt_url:
+        record.short_url = short_url
+    return short_url
 
 
 async def process_donation_receipt_background(receipt_id: UUID) -> None:

@@ -30,6 +30,7 @@ class DonationReceipt(Base):
     receipt_doc_num: Mapped[str | None] = mapped_column(String(100), nullable=True)
     receipt_data: Mapped[str | None] = mapped_column(Text, nullable=True)
     receipt_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    short_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[str] = mapped_column(String(40), default="received", index=True)
     channel: Mapped[str | None] = mapped_column(String(20), nullable=True)
     send_attempts: Mapped[int] = mapped_column(Integer, default=0)

@@ -1,9 +1,13 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.models import DonationReceipt
 from app.services.donation_receipt_service import STATUS_FAILED, STATUS_SENT, DonationReceiptService
+from app.services.messaging.shlink_client import ShortenError
 from app.services.messaging.sms_client import SmsSendError
 from app.services.messaging.whatsapp_client import WhatsAppSendError
+
+RECEIPT_URL = "https://files.ezcount.co.il/front/documents/get/abc"
+SHORT_URL = "https://s.example.com/abcdefghij"
 
 
 async def test_process_delivery_sms_success(db_session):
@@ -12,7 +16,7 @@ async def test_process_delivery_sms_success(db_session):
         donor_name="ישראל",
         donor_phone="0522514139",
         amount="50",
-        receipt_url="https://files.ezcount.co.il/front/documents/get/abc",
+        receipt_url=RECEIPT_URL,
         status="send_pending",
     )
     db_session.add(record)
@@ -36,7 +40,7 @@ async def test_process_delivery_falls_back_to_whatsapp(db_session):
     record = DonationReceipt(
         transaction_id="556",
         donor_phone="0522514139",
-        receipt_url="https://files.ezcount.co.il/front/documents/get/abc",
+        receipt_url=RECEIPT_URL,
         status="send_pending",
     )
     db_session.add(record)
@@ -67,7 +71,7 @@ async def test_process_delivery_both_channels_fail(db_session):
     record = DonationReceipt(
         transaction_id="557",
         donor_phone="0522514139",
-        receipt_url="https://files.ezcount.co.il/front/documents/get/abc",
+        receipt_url=RECEIPT_URL,
         status="send_pending",
     )
     db_session.add(record)
@@ -130,3 +134,135 @@ async def test_process_delivery_show_invoice_then_sms(db_session):
     assert record.receipt_url == receipt_url
     assert record.status == STATUS_SENT
     assert record.channel == "sms"
+
+
+async def test_process_delivery_sends_short_url(db_session):
+    record = DonationReceipt(
+        transaction_id="559",
+        donor_name="ישראל",
+        donor_phone="0522514139",
+        amount="50",
+        receipt_url=RECEIPT_URL,
+        status="send_pending",
+    )
+    db_session.add(record)
+    await db_session.commit()
+    await db_session.refresh(record)
+
+    service = DonationReceiptService(db_session)
+    with (
+        patch(
+            "app.services.donation_receipt_service.shorten_url",
+            new_callable=AsyncMock,
+            return_value=SHORT_URL,
+        ) as shorten,
+        patch(
+            "app.services.donation_receipt_service.send_sms",
+            new_callable=AsyncMock,
+            return_value={"responseStatus": "OK", "oks": ["0522514139"]},
+        ) as sms,
+    ):
+        await service.process_delivery(record.id)
+
+    shorten.assert_awaited_once_with(RECEIPT_URL)
+    message = sms.await_args.kwargs["message"]
+    assert message.endswith(SHORT_URL)
+    assert RECEIPT_URL not in message
+    await db_session.refresh(record)
+    assert record.short_url == SHORT_URL
+    assert record.status == STATUS_SENT
+
+
+async def test_process_delivery_uses_long_url_when_shorten_fails(db_session):
+    record = DonationReceipt(
+        transaction_id="560",
+        donor_phone="0522514139",
+        receipt_url=RECEIPT_URL,
+        status="send_pending",
+    )
+    db_session.add(record)
+    await db_session.commit()
+    await db_session.refresh(record)
+
+    service = DonationReceiptService(db_session)
+    with (
+        patch(
+            "app.services.donation_receipt_service.shorten_url",
+            new_callable=AsyncMock,
+            side_effect=ShortenError("Shlink request failed"),
+        ),
+        patch(
+            "app.services.donation_receipt_service.send_sms",
+            new_callable=AsyncMock,
+            return_value={"responseStatus": "OK", "oks": ["0522514139"]},
+        ) as sms,
+    ):
+        await service.process_delivery(record.id)
+
+    assert RECEIPT_URL in sms.await_args.kwargs["message"]
+    await db_session.refresh(record)
+    assert record.short_url is None
+    assert record.status == STATUS_SENT
+    assert record.channel == "sms"
+
+
+async def test_process_delivery_reuses_stored_short_url(db_session):
+    record = DonationReceipt(
+        transaction_id="561",
+        donor_phone="0522514139",
+        receipt_url=RECEIPT_URL,
+        short_url=SHORT_URL,
+        status="send_pending",
+    )
+    db_session.add(record)
+    await db_session.commit()
+    await db_session.refresh(record)
+
+    service = DonationReceiptService(db_session)
+    with (
+        patch(
+            "app.services.donation_receipt_service.shorten_url",
+            new_callable=AsyncMock,
+        ) as shorten,
+        patch(
+            "app.services.donation_receipt_service.send_sms",
+            new_callable=AsyncMock,
+            return_value={"responseStatus": "OK", "oks": ["0522514139"]},
+        ) as sms,
+    ):
+        await service.process_delivery(record.id)
+
+    shorten.assert_not_awaited()
+    assert sms.await_args.kwargs["message"].endswith(SHORT_URL)
+    await db_session.refresh(record)
+    assert record.short_url == SHORT_URL
+
+
+def test_snapshot_clears_short_url_when_receipt_url_changes():
+    record = DonationReceipt(
+        transaction_id="562",
+        donor_phone="0522514139",
+        receipt_url=RECEIPT_URL,
+        short_url=SHORT_URL,
+    )
+    new_url = "https://files.ezcount.co.il/front/documents/get/new"
+    DonationReceiptService(MagicMock())._apply_webhook_snapshot(
+        record,
+        {"Phone": "0522514139", "ReceiptData": new_url},
+    )
+    assert record.receipt_url == new_url
+    assert record.short_url is None
+
+
+def test_snapshot_keeps_short_url_when_receipt_url_is_unchanged():
+    record = DonationReceipt(
+        transaction_id="563",
+        receipt_url=RECEIPT_URL,
+        short_url=SHORT_URL,
+    )
+    DonationReceiptService(MagicMock())._apply_webhook_snapshot(
+        record,
+        {"Phone": "0522514139", "ReceiptData": RECEIPT_URL},
+    )
+    assert record.short_url == SHORT_URL
+    assert record.receipt_url == RECEIPT_URL

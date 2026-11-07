@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     greenapi_api_token: str = ""
     greenapi_api_url: str = "https://api.green-api.com"
 
+    shlink_base_url: str = ""
+    shlink_api_key: str = ""
+
     @field_validator("database_url", "test_database_url", mode="before")
     @classmethod
     def ensure_async_postgres_driver(cls, value: object) -> object:
