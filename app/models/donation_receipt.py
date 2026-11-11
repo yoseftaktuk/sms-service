@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Identity, Integer, String, Text, func
+from sqlalchemy import BigInteger, DateTime, Identity, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,6 +18,8 @@ class DonationReceipt(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
     web_doc_id: Mapped[int] = mapped_column(Integer, Identity(always=False), unique=True)
     transaction_id: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    source: Mapped[str] = mapped_column(String(20), nullable=False, default="webhook", server_default="webhook")
+    achnasot_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, nullable=True)
     amount: Mapped[str | None] = mapped_column(String(50), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(10), nullable=True)
     groupe: Mapped[str | None] = mapped_column(String(200), nullable=True)

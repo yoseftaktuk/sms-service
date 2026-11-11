@@ -78,6 +78,7 @@ class Settings(BaseSettings):
     nedarim_api_password: str = ""
     nedarim_webhook_secret: str = ""
     nedarim_hmac_max_skew_seconds: int = 300
+    sync_job_token: str = ""
 
     yemot_api_key: str = ""
     yemot_sms_from: str = ""

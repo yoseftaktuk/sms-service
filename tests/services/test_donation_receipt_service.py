@@ -1,7 +1,12 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.models import DonationReceipt
-from app.services.donation_receipt_service import STATUS_FAILED, STATUS_SENT, DonationReceiptService
+from app.services.donation_receipt_service import (
+    STATUS_FAILED,
+    STATUS_SENT,
+    DonationReceiptService,
+    build_receipt_message,
+)
 from app.services.messaging.shlink_client import ShortenError
 from app.services.messaging.sms_client import SmsSendError
 from app.services.messaging.whatsapp_client import WhatsAppSendError
@@ -252,6 +257,56 @@ def test_snapshot_clears_short_url_when_receipt_url_changes():
     )
     assert record.receipt_url == new_url
     assert record.short_url is None
+
+
+def test_build_receipt_message_uses_shekel_unless_currency_is_dollar():
+    shekel = build_receipt_message(donor_name="דנה", amount="10", receipt_url="https://example.com/r")
+    dollar = build_receipt_message(
+        donor_name="דנה",
+        amount="10",
+        receipt_url="https://example.com/r",
+        currency="2",
+    )
+    assert "בסך 10 ₪" in shekel
+    assert "בסך 10 $" in dollar
+    assert shekel.startswith("שלום דנה, תודה על תרומתך")
+
+
+async def test_process_delivery_show_invoice_uses_achnasot_id(db_session):
+    record = DonationReceipt(
+        transaction_id="achnasot:77",
+        source="achnasot",
+        achnasot_id=77,
+        donor_name="ישראל",
+        donor_phone="0522514139",
+        amount="18",
+        currency="1",
+        status="receipt_pending",
+    )
+    db_session.add(record)
+    await db_session.commit()
+    await db_session.refresh(record)
+
+    receipt_url = "https://files.ezcount.co.il/front/documents/get/from-achnasot"
+    service = DonationReceiptService(db_session)
+    with (
+        patch(
+            "app.services.donation_receipt_service.show_invoice",
+            new_callable=AsyncMock,
+            return_value=receipt_url,
+        ) as show,
+        patch(
+            "app.services.donation_receipt_service.send_sms",
+            new_callable=AsyncMock,
+            return_value={"responseStatus": "OK", "oks": ["0522514139"]},
+        ),
+    ):
+        await service.process_delivery(record.id)
+
+    show.assert_awaited_once_with(achnasot_id="77")
+    await db_session.refresh(record)
+    assert record.receipt_url == receipt_url
+    assert record.status == STATUS_SENT
 
 
 def test_snapshot_keeps_short_url_when_receipt_url_is_unchanged():

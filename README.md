@@ -1,8 +1,11 @@
 # sms-service
 
-FastAPI service that receives a Nedarim Plus transaction webhook and sends the donation receipt link by SMS (Yemot), then WhatsApp (GreenAPI) if SMS fails. When Shlink is configured, the message carries a short URL that redirects to the Ezcount receipt.
+FastAPI service that receives a Nedarim Plus transaction webhook and sends the donation receipt link by SMS (Yemot), then WhatsApp (GreenAPI) if SMS fails. When Shlink is configured, the message carries a short URL that redirects to the Ezcount receipt. Once an hour it also pulls new external incomes, such as cash, and sends the same message.
 
-Endpoint: `POST /api/v1/webhooks/nedarim/transactions`
+Endpoints:
+
+- `POST /api/v1/webhooks/nedarim/transactions`
+- `POST /api/v1/jobs/achnasot-sync`
 
 ## Environment file
 
@@ -18,7 +21,8 @@ cp .env.example .env
 | --- | --- |
 | `DATABASE_URL` | Postgres URL for the app, for example `postgresql+asyncpg://postgres:postgres@localhost:5432/sms_service` |
 | `NEDARIM_WEBHOOK_SECRET` | HMAC secret from Nedarim (Webhook settings). The endpoint returns 503 until this is set. |
-| `NEDARIM_API_PASSWORD` | Nedarim API password (`npk_...`). Used by `ShowInvoice` when the webhook has no receipt link yet. |
+| `SYNC_JOB_TOKEN` | Shared secret for the hourly external-income sync. `POST /api/v1/jobs/achnasot-sync` returns 503 until this is set. |
+| `NEDARIM_API_PASSWORD` | Nedarim API password (`npk_...`). Used by `ShowInvoice`, and by the hourly external-income pull. |
 | `YEMOT_API_KEY` | Yemot firewall API key. Sent as the `Authorization` header for `SendSms`. |
 | `GREENAPI_ID_INSTANCE` | GreenAPI instance id. Used only when SMS fails. |
 | `GREENAPI_API_TOKEN` | GreenAPI API token. Used only when SMS fails. |
@@ -98,6 +102,31 @@ If sms-service must call the public origin, drop the `allow`/`deny` lines and re
 Only `https://files.ezcount.co.il/...` receipts are shortened. Any other URL is sent unchanged. A failed Shlink call also sends the original Ezcount URL, and the donation is still delivered.
 
 Check the instance with `GET https://s.example.com/rest/health`. The body is JSON with `"status": "pass"`. Then shorten one receipt and open the short link. It should redirect to the Ezcount document.
+
+## External incomes
+
+Cash and other manual receipts do not arrive on the transaction webhook. Cloud Scheduler calls `POST /api/v1/jobs/achnasot-sync` at minute 0 of every hour in `Asia/Jerusalem`.
+
+Send `Authorization: Bearer $SYNC_JOB_TOKEN`. The first successful call only stores the highest external-income id and does not send messages. Later calls ask Nedarim for ids above that mark (`GetAchnasotJson`). Each income is stored by its id. A donor is texted once, with the same receipt sentence as a webhook donation, after `ShowInvoice` returns a link. A row already marked sent is not texted again.
+
+An income with no receipt yet stays pending. Later hours call `ShowInvoice` until a link appears or 30 days pass. No phone number skips the send. A failed send is retried on a later hour.
+
+`GetAchnasotJson` allows 20 calls per hour for this institution and source IP. One hourly run stays inside that limit.
+
+Create the schedule once. Replace the service URL, and use the same value stored on Cloud Run as `SYNC_JOB_TOKEN`:
+
+```bash
+gcloud scheduler jobs create http achnasot-sync \
+  --location=me-west1 \
+  --schedule="0 * * * *" \
+  --time-zone="Asia/Jerusalem" \
+  --uri="https://SERVICE_URL/api/v1/jobs/achnasot-sync" \
+  --http-method=POST \
+  --headers="Authorization=Bearer SYNC_JOB_TOKEN" \
+  --attempt-deadline=300s
+```
+
+Cloud Build does not create this job.
 
 ## Deploy
 

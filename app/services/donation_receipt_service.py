@@ -28,8 +28,9 @@ STATUS_SEND_PENDING = "send_pending"
 STATUS_SENT = "sent"
 STATUS_FAILED = "failed"
 STATUS_SKIPPED_NO_PHONE = "skipped_no_phone"
+STATUS_SKIPPED_NO_RECEIPT = "skipped_no_receipt"
 
-TERMINAL_STATUSES = {STATUS_SENT, STATUS_SKIPPED_NO_PHONE}
+TERMINAL_STATUSES = {STATUS_SENT, STATUS_SKIPPED_NO_PHONE, STATUS_SKIPPED_NO_RECEIPT}
 
 
 def _str_field(payload: dict[str, Any], *keys: str) -> str | None:
@@ -43,9 +44,16 @@ def _str_field(payload: dict[str, Any], *keys: str) -> str | None:
     return None
 
 
-def build_receipt_message(*, donor_name: str | None, amount: str | None, receipt_url: str) -> str:
+def build_receipt_message(
+    *,
+    donor_name: str | None,
+    amount: str | None,
+    receipt_url: str,
+    currency: str | None = None,
+) -> str:
     name = donor_name or "תורם יקר"
-    amount_part = f" בסך {amount} ₪" if amount else ""
+    symbol = "$" if (currency or "").strip() == "2" else "₪"
+    amount_part = f" בסך {amount} {symbol}" if amount else ""
     return f"שלום {name}, תודה על תרומתך{amount_part} לבית כנסת פועלי צדק. הקבלה שלך: {receipt_url}"
 
 
@@ -143,7 +151,7 @@ class DonationReceiptService:
             return
 
         if not record.receipt_url:
-            record.receipt_url = await show_invoice(record.transaction_id)
+            record.receipt_url = await _lookup_receipt_url(record)
             if not record.receipt_url:
                 record.status = STATUS_RECEIPT_PENDING
                 await self.db.commit()
@@ -158,6 +166,7 @@ class DonationReceiptService:
             donor_name=record.donor_name,
             amount=record.amount,
             receipt_url=await _link_for_message(record),
+            currency=record.currency,
         )
         record.send_attempts = (record.send_attempts or 0) + 1
         record.status = STATUS_SEND_PENDING
@@ -187,6 +196,14 @@ class DonationReceiptService:
             record.last_error = str(exc)[:500]
             record.status = STATUS_FAILED
             await self.db.commit()
+
+
+async def _lookup_receipt_url(record: DonationReceipt) -> str | None:
+    if record.source == "achnasot":
+        if record.achnasot_id is None:
+            return None
+        return await show_invoice(achnasot_id=str(record.achnasot_id))
+    return await show_invoice(record.transaction_id)
 
 
 async def _link_for_message(record: DonationReceipt) -> str:
