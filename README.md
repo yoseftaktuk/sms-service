@@ -107,7 +107,7 @@ Check the instance with `GET https://s.example.com/rest/health`. The body is JSO
 
 Cash and other manual receipts do not arrive on the transaction webhook. Cloud Scheduler calls `POST /api/v1/jobs/achnasot-sync` at minute 0 of every hour in `Asia/Jerusalem`.
 
-Send `Authorization: Bearer $SYNC_JOB_TOKEN`. The first successful call only stores the highest external-income id and does not send messages. Later calls ask Nedarim for ids above that mark (`GetAchnasotJson`). Each income is stored by its id. A donor is texted once, with the same receipt sentence as a webhook donation, after `ShowInvoice` returns a link. A row already marked sent is not texted again.
+Send `Authorization: Bearer $SYNC_JOB_TOKEN`. The first successful call only stores the highest external-income id and does not send messages. Later calls ask Nedarim for ids above that mark (`GetAchnasotJson`, `Order=Asc`, pages of 20). If more than 20 new incomes arrived, the run continues from the updated cursor until the backlog is cleared (up to 10 pages). Each income is stored by its id. A donor is texted once, with the same receipt sentence as a webhook donation, after `ShowInvoice` returns a link. A row already marked `sent` (or skipped) is not texted again.
 
 An income with no receipt yet stays pending. Later hours call `ShowInvoice` until a link appears or 30 days pass. No phone number skips the send. A failed send is retried on a later hour.
 

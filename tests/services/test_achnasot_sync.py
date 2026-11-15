@@ -76,7 +76,7 @@ async def test_new_income_with_receipt_is_sent_once(db_session):
         40: [_income(41)],
     }
 
-    async def fake_page(*, last_id=None, max_id=200, order="Asc"):
+    async def fake_page(*, last_id=None, max_id=20, order="Asc"):
         return pages.get(last_id, [])
 
     service = AchnasotSyncService(db_session)
@@ -158,7 +158,7 @@ async def test_receipt_issued_later_is_sent_on_the_next_run(db_session):
     await _seed_cursor(db_session, 40)
     pages = [[_income(41, HasKabala="0")], []]
 
-    async def fake_page(*, last_id=None, max_id=200, order="Asc"):
+    async def fake_page(*, last_id=None, max_id=20, order="Asc"):
         if pages:
             return pages.pop(0)
         return []
@@ -348,10 +348,10 @@ async def test_rate_limit_does_not_move_cursor(db_session):
 async def test_full_page_continues_from_the_highest_id(db_session, monkeypatch):
     monkeypatch.setattr("app.services.achnasot_sync_service.PAGE_SIZE", 2)
     await _seed_cursor(db_session, 10)
-    calls: list[int | None] = []
+    calls: list[tuple[int | None, int]] = []
 
-    async def fake_page(*, last_id=None, max_id=200, order="Asc"):
-        calls.append(last_id)
+    async def fake_page(*, last_id=None, max_id=20, order="Asc"):
+        calls.append((last_id, max_id))
         if last_id == 10:
             return [_income(11, HasKabala="0"), _income(12, HasKabala="0")]
         return []
@@ -363,8 +363,27 @@ async def test_full_page_continues_from_the_highest_id(db_session, monkeypatch):
     ):
         result = await service.sync()
 
-    assert calls == [10, 12]
+    assert calls == [(10, 2), (12, 2)]
     assert result["fetched"] == 2
     assert result["last_id"] == 12
     assert result["sent"] == 0
     sms.assert_not_awaited()
+
+
+async def test_sync_requests_page_size_twenty(db_session):
+    await _seed_cursor(db_session, 40)
+    seen: dict[str, object] = {}
+
+    async def fake_page(*, last_id=None, max_id=20, order="Asc"):
+        seen["last_id"] = last_id
+        seen["max_id"] = max_id
+        seen["order"] = order
+        return []
+
+    service = AchnasotSyncService(db_session)
+    with patch("app.services.achnasot_sync_service.get_achnasot_page", new=fake_page):
+        result = await service.sync()
+
+    assert seen == {"last_id": 40, "max_id": 20, "order": "Asc"}
+    assert result["status"] == "ok"
+    assert result["fetched"] == 0

@@ -91,14 +91,14 @@ async def test_get_achnasot_page_sends_last_id(monkeypatch):
     monkeypatch.setattr(settings, "nedarim_api_password", "npk_test")
     client = _http_client([{"ID": 12, "Phone": "0522514139"}])
     with patch("app.services.nedarim_client.httpx.AsyncClient", return_value=client):
-        rows = await get_achnasot_page(last_id=10, max_id=200, order="Asc")
+        rows = await get_achnasot_page(last_id=10, max_id=20, order="Asc")
 
     assert rows == [{"ID": 12, "Phone": "0522514139"}]
     params = client.get.await_args.kwargs["params"]
     assert client.get.await_args.args[0] == MANAGE_URL
     assert params["Action"] == "GetAchnasotJson"
     assert params["LastId"] == "10"
-    assert params["MaxId"] == "200"
+    assert params["MaxId"] == "20"
     assert params["Order"] == "Asc"
     assert params["ApiPassword"] == "npk_test"
 

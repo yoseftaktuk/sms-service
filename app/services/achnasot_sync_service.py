@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 CURSOR_KEY = "achnasot"
 SOURCE_ACHNASOT = "achnasot"
-PAGE_SIZE = 200
+PAGE_SIZE = 20
 MAX_PAGES = 10
 RECEIPT_WAIT_DAYS = 30
 LOCK_KEY = 701866901

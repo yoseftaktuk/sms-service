@@ -106,7 +106,7 @@ async def show_invoice(
 async def get_achnasot_page(
     *,
     last_id: int | None = None,
-    max_id: int = 200,
+    max_id: int = 20,
     order: str = "Asc",
 ) -> list[dict]:
     """Return one page of external incomes.
